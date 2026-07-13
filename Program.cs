@@ -1,18 +1,29 @@
 using System.Reflection;
 
-// Metadata-only explorer for the Civil 3D managed API.
+// Metadata-only explorer for the Civil 3D managed API (loads all Aecc*Mgd.dll).
 // Usage:
 //   dotnet run -- members <FullTypeName>     list a type's public instance properties
+//   dotnet run -- methods <FullTypeName>     list a type's public methods (incl. static)
 //   dotnet run -- search  <substring>        list all type names containing <substring>
-//   dotnet run -- ctors   <substring>        (alias of search) find types by name
 
 string acad = @"C:\Program Files\Autodesk\AutoCAD 2026";
-string[] dirs = { acad, Path.Combine(acad, "C3D"), Path.Combine(acad, "ACA") };
+string c3d = Path.Combine(acad, "C3D");
+string appPlugins = @"C:\Program Files\Autodesk\ApplicationPlugins";
 string runtimeDir = Path.GetDirectoryName(typeof(object).Assembly.Location);
 
-var paths = dirs.Where(Directory.Exists)
+// Every Civil managed assembly we can find: the C3D folder plus any Aecc*Mgd.dll
+// shipped inside ApplicationPlugins bundles (e.g. Drainage). Add more roots as needed.
+var civilDlls = Directory.GetFiles(c3d, "Aecc*Mgd.dll").ToList();
+if (Directory.Exists(appPlugins))
+    civilDlls.AddRange(Directory.GetFiles(appPlugins, "Aecc*Mgd.dll", SearchOption.AllDirectories));
+civilDlls = civilDlls.GroupBy(Path.GetFileName).Select(g => g.First()).ToList();  // de-dupe by name
+
+// Resolver path = AutoCAD/C3D/ACA + each folder holding a Civil assembly + .NET runtime.
+var resolveDirs = new List<string> { acad, c3d, Path.Combine(acad, "ACA"), runtimeDir };
+resolveDirs.AddRange(civilDlls.Select(Path.GetDirectoryName));
+
+var paths = resolveDirs.Distinct().Where(Directory.Exists)
                 .SelectMany(d => Directory.GetFiles(d, "*.dll"))
-                .Concat(Directory.GetFiles(runtimeDir, "*.dll"))
                 .GroupBy(Path.GetFileName).Select(g => g.First())   // de-dupe by file name
                 .ToList();
 
@@ -20,11 +31,12 @@ var resolver = new PathAssemblyResolver(paths);
 using var mlc = new MetadataLoadContext(resolver);
 
 var assemblies = new List<Assembly>();
-foreach (var dll in new[] { "AeccDbMgd.dll", "AeccPressurePipesMgd.dll" })
+foreach (var dll in civilDlls)
 {
-    try { assemblies.Add(mlc.LoadFromAssemblyPath(Path.Combine(acad, "C3D", dll))); }
-    catch (Exception e) { Console.WriteLine($"(could not load {dll}: {e.Message})"); }
+    try { assemblies.Add(mlc.LoadFromAssemblyPath(dll)); }
+    catch { /* skip assemblies whose metadata won't load */ }
 }
+Console.Error.WriteLine($"(loaded {assemblies.Count} Civil assemblies)");
 
 if (args.Length < 2) { Console.WriteLine("usage: members <FullTypeName> | search <substring>"); return; }
 string cmd = args[0], arg = args[1];
