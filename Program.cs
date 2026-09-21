@@ -64,7 +64,12 @@ else if (cmd == "members")
     {
         string rt;
         try { rt = p.PropertyType.Name; } catch { rt = "?"; }
-        Console.WriteLine($"  {p.Name} -> {rt}");
+        // Access shows which half is public: [get/set] is a settable property.
+        bool canGet = p.GetGetMethod() != null;
+        bool canSet = p.GetSetMethod() != null;
+        string access = canGet && canSet ? "[get/set]" : canSet ? "[set]" : "[get]";
+        string decl = p.DeclaringType?.Name ?? "";
+        Console.WriteLine($"  {p.Name} -> {rt}  {access}  ({decl})");
     }
 }
 else if (cmd == "methods")
